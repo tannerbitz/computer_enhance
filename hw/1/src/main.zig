@@ -204,10 +204,22 @@ pub fn main() !void {
 //
 // W distinguishes between byte and word operation, 0 = byte op, 1 = word op
 //
-
 fn to_string(rr_move: Reg2RegMove, alloc: Allocator) ![]u8 {
+    const reg_src_upper: []const u8 = @tagName(rr_move.src);
+    const reg_dest_upper: []const u8 = @tagName(rr_move.dest);
+    var reg_src: []u8 = try alloc.alloc(u8, reg_src_upper.len);
+    var reg_dest: []u8 = try alloc.alloc(u8, reg_dest_upper.len);
+    defer alloc.free(reg_src);
+    defer alloc.free(reg_dest);
+    for (reg_src_upper, 0..) |c, i| {
+        reg_src[i] = std.ascii.toLower(c);
+    }
+    for (reg_dest_upper, 0..) |c, i| {
+        reg_dest[i] = std.ascii.toLower(c);
+    }
+
     const fstr: []u8 = try alloc.alloc(u8, 100);
-    _ = try std.fmt.bufPrint(fstr, "MOV {s},{s}", .{ @tagName(rr_move.src), @tagName(rr_move.dest) });
+    _ = try std.fmt.bufPrint(fstr, "mov {s},{s}", .{ reg_src, reg_dest });
     return fstr;
 }
 
@@ -216,7 +228,7 @@ const OpCode = enum(u8) {
 };
 
 test "test reg to reg move printer" {
-    const alloc = std.heap.page_allocator;
+    const alloc = std.testing.allocator;
 
     const r2r: Reg2RegMove = .{
         .src = Reg.AL,
@@ -224,7 +236,8 @@ test "test reg to reg move printer" {
     };
 
     const fstr = try to_string(r2r, alloc);
-    try std.testing.expectStringStartsWith(fstr, "MOV AL,CL");
+    defer alloc.free(fstr);
+    try std.testing.expectStringStartsWith(fstr, "mov al,cl");
 }
 
 test "test reg to reg move decode" {
