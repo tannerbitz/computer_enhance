@@ -120,12 +120,25 @@ const BytecodeLexer = struct {
     }
 
     fn decodeMoveRegMemToFromReg(self: *BytecodeLexer) DecodeFailure!CpuOp {
-        const low_byte: u8 = self.peekByte();
+        const HighByte = packed struct {
+            w: u1, // low bits
+            d: u1,
+            op_code: u6, // high bits
+        };
+        _ = HighByte;
 
-        const ModMask: u8 = 0b11000000;
-        const mod: u2 = @truncate((low_byte & ModMask) >> 6);
-        if (mod == @intFromEnum(Mod.REG)) {
+        const LowByte = packed struct {
+            rm: u3,
+            reg: u3,
+            mod: Mod,
+        };
+
+        const low_byte: LowByte = @bitCast(self.peekByte());
+
+        if (low_byte.mod == Mod.REG) {
             return self.decodeMoveRegToReg();
+        } else if (low_byte.mod == Mod.MEM_NO_DISP) {
+            return DecodeFailure.NoMatchingOp;
         }
         return DecodeFailure.NoMatchingOp;
     }
@@ -230,25 +243,6 @@ pub fn main() !void {
 //
 // W distinguishes between byte and word operation, 0 = byte op, 1 = word op
 //
-fn to_string(rr_move: Reg2RegMove, alloc: Allocator) ![]u8 {
-    const reg_src_upper: []const u8 = @tagName(rr_move.src);
-    const reg_dest_upper: []const u8 = @tagName(rr_move.dest);
-    var reg_src: []u8 = try alloc.alloc(u8, reg_src_upper.len);
-    var reg_dest: []u8 = try alloc.alloc(u8, reg_dest_upper.len);
-    defer alloc.free(reg_src);
-    defer alloc.free(reg_dest);
-    for (reg_src_upper, 0..) |c, i| {
-        reg_src[i] = std.ascii.toLower(c);
-    }
-    for (reg_dest_upper, 0..) |c, i| {
-        reg_dest[i] = std.ascii.toLower(c);
-    }
-
-    const fstr: []u8 = try alloc.alloc(u8, 100);
-    _ = try std.fmt.bufPrint(fstr, "mov {s}, {s}", .{ reg_dest, reg_src });
-    return fstr;
-}
-
 const OpCode = enum(u8) {
     MOV_REGMEM_TOFROM_REG = 0b00100010,
 };
@@ -261,9 +255,9 @@ test "test reg to reg move printer" {
         .dest = Reg.CL,
     };
 
-    const fstr = try to_string(r2r, alloc);
+    const fstr = try std.fmt.allocPrint(alloc, "{any}", .{r2r});
     defer alloc.free(fstr);
-    try std.testing.expectStringStartsWith(fstr, "mov al,cl");
+    try std.testing.expectStringStartsWith(fstr, "mov cl, al");
 }
 
 test "test reg to reg move decode" {
@@ -284,4 +278,17 @@ test "test reg to reg move decode" {
     const op: CpuOp = try lexer.nextCpuOp();
 
     try std.testing.expectEqual(expected, op);
+}
+
+test "packed struct with enums" {
+    const LowByte = packed struct(u8) {
+        rm: u3, // low bits
+        reg: u3,
+        mod: Mod, // high bits
+    };
+
+    const byte: u8 = 0b11000000;
+    const low_byte: LowByte = @bitCast(byte);
+
+    try std.testing.expectEqual(Mod.REG, low_byte.mod);
 }
