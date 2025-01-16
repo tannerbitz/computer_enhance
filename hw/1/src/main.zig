@@ -29,9 +29,44 @@ const Mod = enum(u2) {
     REG = 0b11,
 };
 
+fn getMaxEnumFieldLen(t: anytype) u8 {
+    const ti = @typeInfo(t);
+    var max_len: u8 = 0;
+    inline for (ti.Enum.fields) |f| {
+        const name_len = f.name.len;
+        if (max_len < name_len) {
+            max_len = name_len;
+        }
+    }
+    return max_len;
+}
+
 const Reg2RegMove = struct {
     src: Reg,
     dest: Reg,
+    pub fn format(
+        self: Reg2RegMove,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+
+        const max_reg_name_len = comptime getMaxEnumFieldLen(Reg);
+        const reg_src_upper: []const u8 = @tagName(self.src);
+        const reg_dest_upper: []const u8 = @tagName(self.dest);
+        var reg_src: [max_reg_name_len]u8 = undefined;
+        var reg_dest: [max_reg_name_len]u8 = undefined;
+        for (reg_src_upper, 0..) |c, i| {
+            reg_src[i] = std.ascii.toLower(c);
+        }
+        for (reg_dest_upper, 0..) |c, i| {
+            reg_dest[i] = std.ascii.toLower(c);
+        }
+
+        try writer.print("mov {s}, {s}", .{ reg_dest, reg_src });
+    }
 };
 
 const CpuOp = union(enum) {
@@ -174,9 +209,7 @@ pub fn main() !void {
     var lexer: BytecodeLexer = BytecodeLexer.init(buffer);
     var cpu_op = try lexer.nextCpuOp();
     while (cpu_op != .eof) : (cpu_op = try lexer.nextCpuOp()) {
-        const fstr = try to_string(cpu_op.r2r_move, alloc);
-        defer alloc.free(fstr);
-        _ = try asm_writer.print("{s}\n", .{fstr});
+        _ = try asm_writer.print("{any}\n", .{cpu_op.r2r_move});
     }
 }
 
@@ -211,7 +244,7 @@ fn to_string(rr_move: Reg2RegMove, alloc: Allocator) ![]u8 {
     }
 
     const fstr: []u8 = try alloc.alloc(u8, 100);
-    _ = try std.fmt.bufPrint(fstr, "mov {s},{s}", .{ reg_dest, reg_src });
+    _ = try std.fmt.bufPrint(fstr, "mov {s}, {s}", .{ reg_dest, reg_src });
     return fstr;
 }
 
