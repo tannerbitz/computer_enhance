@@ -199,7 +199,8 @@ pub fn main() !void {
     const input_file = try std.fs.cwd().openFile(args[1], .{ .mode = .read_only });
     defer input_file.close();
     const reader = input_file.reader();
-    const buffer = try reader.readAllAlloc(alloc, 2);
+    const input_stat = try input_file.stat();
+    const buffer = try reader.readAllAlloc(alloc, input_stat.size);
     defer alloc.free(buffer);
 
     var output_file = try std.fs.cwd().createFile("output.asm", .{ .read = true });
