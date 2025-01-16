@@ -34,11 +34,9 @@ const Reg2RegMove = struct {
     dest: Reg,
 };
 
-const EOF = struct {};
-
 const CpuOp = union(enum) {
     r2r_move: Reg2RegMove,
-    eof: EOF,
+    eof: void,
 };
 
 const DecodeFailure = error{
@@ -75,7 +73,8 @@ const BytecodeLexer = struct {
 
     pub fn nextCpuOp(self: *BytecodeLexer) DecodeFailure!CpuOp {
         if (self.byte == 0) {
-            return CpuOp{ .eof = .{} };
+            const cpu_op: CpuOp = .eof;
+            return cpu_op;
         }
         const op_code: u8 = self.byte >> 2;
         if ((op_code & @intFromEnum(OpCode.MOV_REGMEM_TOFROM_REG)) != 0) {
@@ -160,32 +159,25 @@ pub fn main() !void {
 
     defer std.process.argsFree(alloc, args);
 
-    const stdout = std.io.getStdOut().writer();
-
     if (args.len < 2) return error.ExpectedArgument;
 
-    const file = try std.fs.cwd().openFile(args[1], .{ .mode = .read_only });
-    const reader = file.reader();
+    const input_file = try std.fs.cwd().openFile(args[1], .{ .mode = .read_only });
+    defer input_file.close();
+    const reader = input_file.reader();
     const buffer = try reader.readAllAlloc(alloc, 2);
     defer alloc.free(buffer);
 
-    try stdout.print("f: {b}\n", .{buffer});
-
-    const r2r: Reg2RegMove = .{
-        .src = Reg.AL,
-        .dest = Reg.CL,
-    };
-    const buff = try to_string(r2r, alloc);
-    try stdout.print("{s}\n", .{buff});
-
-    const input: [2]u8 = .{ 0b10001010, 0b11000111 };
-
-    var lexer: BytecodeLexer = BytecodeLexer.init(&input);
-    const op: CpuOp = try lexer.nextCpuOp();
-
-    const fstr = try to_string(op.r2r_move, alloc);
-    defer alloc.free(fstr);
-    _ = try std.io.getStdOut().writer().write(fstr);
+    var output_file = try std.fs.cwd().createFile("output.asm", .{ .read = true });
+    defer output_file.close();
+    const asm_writer = output_file.writer();
+    _ = try asm_writer.write("bits 16\n");
+    var lexer: BytecodeLexer = BytecodeLexer.init(buffer);
+    var cpu_op = try lexer.nextCpuOp();
+    while (cpu_op != .eof) : (cpu_op = try lexer.nextCpuOp()) {
+        const fstr = try to_string(cpu_op.r2r_move, alloc);
+        defer alloc.free(fstr);
+        _ = try asm_writer.print("{s}\n", .{fstr});
+    }
 }
 
 //     Intel 8086/8088 Instruction Decode
@@ -219,7 +211,7 @@ fn to_string(rr_move: Reg2RegMove, alloc: Allocator) ![]u8 {
     }
 
     const fstr: []u8 = try alloc.alloc(u8, 100);
-    _ = try std.fmt.bufPrint(fstr, "mov {s},{s}", .{ reg_src, reg_dest });
+    _ = try std.fmt.bufPrint(fstr, "mov {s},{s}", .{ reg_dest, reg_src });
     return fstr;
 }
 
