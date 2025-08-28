@@ -27,15 +27,46 @@ const Register = enum(u8) {
     BP = 0b00001101,
     SI = 0b00001110,
     DI = 0b00001111,
+
+    pub fn lowercase_repr(register: Register) [2]u8 {
+        return switch (register) {
+            .AL => "al".*,
+            .CL => "cl".*,
+            .DL => "dl".*,
+            .BL => "bl".*,
+            .AH => "ah".*,
+            .CH => "ch".*,
+            .DH => "dh".*,
+            .BH => "bh".*,
+            .AX => "ax".*,
+            .CX => "cx".*,
+            .DX => "dx".*,
+            .BX => "bx".*,
+            .SP => "sp".*,
+            .BP => "bp".*,
+            .SI => "si".*,
+            .DI => "di".*,
+        };
+    }
 };
 
 const MovRegToReg = struct {
     src: Register,
     dst: Register,
+
+    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+        try writer.print("mov {s}, {s}", .{ this.dst.lowercase_repr(), this.src.lowercase_repr() });
+    }
 };
 
 const Instruction = union(enum) {
     mov_reg_to_reg: MovRegToReg,
+
+    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+        switch (this) {
+            .mov_reg_to_reg => |mov_reg_to_reg| try writer.print("{f}", .{mov_reg_to_reg}),
+        }
+    }
 };
 
 const RegMemToFromRegOpCode = 0b00100010;
@@ -104,6 +135,33 @@ const Decoder = struct {
     }
 };
 
+const Asm16BitsFile = struct {
+    file: std.fs.File,
+    file_writer: std.fs.File.Writer,
+
+    pub fn init(filepath: []const u8, writer_buffer: []u8) !Asm16BitsFile {
+        const file = try std.fs.cwd().createFile(filepath, .{});
+        const file_writer = file.writer(writer_buffer);
+
+        var asm_file = Asm16BitsFile{
+            .file = file,
+            .file_writer = file_writer,
+        };
+        try asm_file.write_header();
+
+        return asm_file;
+    }
+
+    fn write_header(asm_file: *Asm16BitsFile) !void {
+        try asm_file.file_writer.interface.print("bits 16\n", .{});
+    }
+
+    pub fn deinit(asm_file: *Asm16BitsFile) !void {
+        try asm_file.file_writer.interface.flush();
+        asm_file.file.close();
+    }
+};
+
 pub fn main() !void {
     const allocator: std.mem.Allocator = std.heap.page_allocator;
 
@@ -113,9 +171,21 @@ pub fn main() !void {
         return;
     }
 
-    const contents = try readFile(allocator, args[1]);
+    const input_filepath = args[1];
+    const contents = try readFile(allocator, input_filepath);
     defer allocator.free(contents);
-    std.debug.print("{s}\n", .{contents});
+
+    var asm_file_buffer = [_]u8{0} ** 256;
+    const asm_filename = try std.fmt.bufPrint(&asm_file_buffer, "{s}_decoded.asm", .{std.fs.path.basename(input_filepath)});
+    var asm_file = try Asm16BitsFile.init(asm_filename, &asm_file_buffer);
+    defer asm_file.deinit() catch std.debug.print("asm file deinit failed", .{});
+
+    var decoder = try Decoder.init(contents);
+
+    var instruction = decoder.nextInstruction();
+    while (instruction != null) : (instruction = decoder.nextInstruction()) {
+        try asm_file.file_writer.interface.print("{f}\n", .{instruction.?});
+    }
 }
 
 test "decode" {
