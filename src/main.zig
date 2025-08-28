@@ -10,6 +10,13 @@ pub fn readFile(allocator: std.mem.Allocator, filepath: []const u8) ![]u8 {
     return reader.allocRemaining(allocator, .unlimited);
 }
 
+const ModMode = enum(u2) {
+    memory_mode_no_displacement_usually = 0b00,
+    memory_mode_8_bit_displacement = 0b01,
+    memory_mode_16_bit_displacement = 0b10,
+    register_mode = 0b11,
+};
+
 const Register = enum(u8) {
     AL = 0b00000000,
     CL = 0b00000001,
@@ -111,7 +118,7 @@ const Decoder = struct {
 
         const sb: SecondByte = @bitCast(second_byte);
 
-        std.debug.assert(sb.mod == 0b11);
+        std.debug.assert(sb.mod == @intFromEnum(ModMode.register_mode));
 
         const reg: Register = @enumFromInt((@as(u8, @intCast(fb.w_bit)) << 3) | @as(u8, @intCast(sb.reg)));
         const rm: Register = @enumFromInt((@as(u8, @intCast(fb.w_bit)) << 3) | @as(u8, @intCast(sb.rm)));
