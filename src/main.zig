@@ -138,8 +138,8 @@ const EffectiveAddress = struct {
             } else {
                 try writer.print("[{s}", .{base.lowercase_repr()});
             }
-            if (effective_addr.displacement) |displacement| {
-                try writer.print(" + {d}]", .{displacement});
+            if (effective_addr.displacement != null and effective_addr.displacement.? != 0) {
+                try writer.print(" + {d}]", .{effective_addr.displacement.?});
             } else {
                 try writer.print("]", .{});
             }
