@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
     // in this directory.
 
     const exe = b.addExecutable(.{
-        .name = "computer_enhance",
+        .name = "decoder",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
