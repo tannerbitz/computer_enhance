@@ -6,9 +6,11 @@
             "type": "cppdbg",
             "request": "launch",
             "name": "decode my bytes",
-            "program": "${workspaceFolder}/hw/1/zig-out/bin/1",
+            "program": "${workspaceFolder}/zig-out/bin/computer_enhance",
             "cwd": "${workspaceFolder}",
-            "args": [ "${workspaceFolder}/perfaware/part1/listing_0037_single_register_mov" ]
+            "args": [
+                "${workspaceFolder}/../computer_enhance/perfaware/part1/listing_0039_more_movs"
+            ]
         }
     ]
 }
