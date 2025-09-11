@@ -86,20 +86,6 @@ const MovRegToFromEffectiveAddress = struct {
     }
 };
 
-const MovRegToFromDirectAddress = struct {
-    reg: Register,
-    direct_address: DirectAddress,
-    dst: MovOperandType,
-
-    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        return if (this.dst == .register) {
-            try writer.print("mov [{s}], {f}", .{ this.reg.lowercase_repr(), this.direct_address });
-        } else {
-            try writer.print("mov {f}, [{s}]", .{ this.direct_address, this.reg.lowercase_repr() });
-        };
-    }
-};
-
 const MovImmediateToReg = struct {
     reg: Register,
     immediate: u16,
@@ -113,14 +99,12 @@ const MovImmediateToReg = struct {
 const Instruction = union(enum) {
     mov_reg_to_reg: MovRegToReg,
     mov_reg_to_from_effective_address: MovRegToFromEffectiveAddress,
-    mov_reg_to_from_direct_address: MovRegToFromDirectAddress,
     immediate_to_reg: MovImmediateToReg,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (this) {
             .mov_reg_to_reg => |inst| try writer.print("{f}", .{inst}),
             .mov_reg_to_from_effective_address => |inst| try writer.print("{f}", .{inst}),
-            .mov_reg_to_from_direct_address => |inst| try writer.print("{f}", .{inst}),
             .immediate_to_reg => |inst| try writer.print("{f}", .{inst}),
         }
     }
@@ -152,14 +136,6 @@ const EffectiveAddress = struct {
                 }
             }
         }
-    }
-};
-
-const DirectAddress = struct {
-    address: u16,
-
-    pub fn format(direct_addr: DirectAddress, writer: *std.io.Writer) std.io.Writer.Error!void {
-        return try writer.print("[{d}]", .{direct_addr.address});
     }
 };
 
@@ -220,168 +196,74 @@ const Decoder = struct {
                 }
             },
             .memory_mode_no_displacement_usually => {
-                switch (sb.rm) {
-                    0b000 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{
-                            .reg = reg,
-                            .effective_address = .{ .base = .BX, .index = .SI },
-                            .dst = dst,
-                        } };
-                    },
-                    0b001 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{
-                            .reg = reg,
-                            .effective_address = .{ .base = .BX, .index = .DI },
-                            .dst = dst,
-                        } };
-                    },
-                    0b010 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{
-                            .reg = reg,
-                            .effective_address = .{ .base = .BP, .index = .SI },
-                            .dst = dst,
-                        } };
-                    },
-                    0b011 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{
-                            .reg = reg,
-                            .effective_address = .{ .base = .BP, .index = .DI },
-                            .dst = dst,
-                        } };
-                    },
-                    0b100 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{
-                            .reg = reg,
-                            .effective_address = .{ .index = .SI },
-                            .dst = dst,
-                        } };
-                    },
-                    0b101 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{
-                            .reg = reg,
-                            .effective_address = .{ .index = .DI },
-                            .dst = dst,
-                        } };
-                    },
+                const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
+                const effective_address: EffectiveAddress = ea: switch (sb.rm) {
+                    0b000 => .{ .base = .BX, .index = .SI },
+                    0b001 => .{ .base = .BX, .index = .DI },
+                    0b010 => .{ .base = .BP, .index = .SI },
+                    0b011 => .{ .base = .BP, .index = .DI },
+                    0b100 => .{ .index = .SI },
+                    0b101 => .{ .index = .DI },
                     0b110 => {
                         // direct address
                         const low_byte = decoder.nextByte() catch return null;
                         const high_byte = decoder.nextByte() catch return null;
                         const displacement: u16 = @as(u16, @intCast(high_byte)) << 8 | @as(u16, @intCast(low_byte));
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .direct_address else .register;
-                        return .{
-                            .mov_reg_to_from_direct_address = .{
-                                .reg = reg,
-                                .direct_address = .{ .address = displacement },
-                                .dst = dst,
-                            },
-                        };
+                        break :ea .{ .displacement = displacement };
                     },
-                    0b111 => {
-                        const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                        return .{ .mov_reg_to_from_effective_address = .{ .reg = reg, .effective_address = .{ .base = .BX }, .dst = dst } };
+                    0b111 => .{ .base = .BX },
+                };
+                return .{
+                    .mov_reg_to_from_effective_address = .{
+                        .reg = reg,
+                        .effective_address = effective_address,
+                        .dst = dst,
                     },
-                }
+                };
             },
             .memory_mode_8_bit_displacement => {
                 const displacement: u16 = @as(u16, @intCast(decoder.nextByte() catch return null));
                 const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                switch (sb.rm) {
-                    0b000 => return .{ .mov_reg_to_from_effective_address = .{
+                const effective_address: EffectiveAddress = switch (sb.rm) {
+                    0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
+                    0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
+                    0b010 => .{ .base = .BP, .index = .SI, .displacement = displacement },
+                    0b011 => .{ .base = .BP, .index = .DI, .displacement = displacement },
+                    0b100 => .{ .index = .SI, .displacement = displacement },
+                    0b101 => .{ .index = .DI, .displacement = displacement },
+                    0b110 => .{ .base = .BP, .displacement = displacement },
+                    0b111 => .{ .base = .BX, .displacement = displacement },
+                };
+                return .{
+                    .mov_reg_to_from_effective_address = .{
                         .reg = reg,
-                        .effective_address = .{ .base = .BX, .index = .SI, .displacement = displacement },
+                        .effective_address = effective_address,
                         .dst = dst,
-                    } },
-                    0b001 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BX, .index = .DI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b010 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BP, .index = .SI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b011 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BP, .index = .DI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b100 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .index = .SI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b101 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .index = .DI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b110 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BP, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b111 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BX, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                }
+                    },
+                };
             },
             .memory_mode_16_bit_displacement => {
                 const low_byte = decoder.nextByte() catch return null;
                 const high_byte = decoder.nextByte() catch return null;
                 const displacement: u16 = @as(u16, @intCast(high_byte)) << 8 | @as(u16, @intCast(low_byte));
                 const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                switch (sb.rm) {
-                    0b000 => return .{ .mov_reg_to_from_effective_address = .{
+                const effective_address: EffectiveAddress = switch (sb.rm) {
+                    0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
+                    0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
+                    0b010 => .{ .base = .BP, .index = .SI, .displacement = displacement },
+                    0b011 => .{ .base = .BP, .index = .DI, .displacement = displacement },
+                    0b100 => .{ .index = .SI, .displacement = displacement },
+                    0b101 => .{ .index = .DI, .displacement = displacement },
+                    0b110 => .{ .base = .BP, .displacement = displacement },
+                    0b111 => .{ .base = .BX, .displacement = displacement },
+                };
+                return .{
+                    .mov_reg_to_from_effective_address = .{
                         .reg = reg,
-                        .effective_address = .{ .base = .BX, .index = .SI, .displacement = displacement },
+                        .effective_address = effective_address,
                         .dst = dst,
-                    } },
-                    0b001 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BX, .index = .DI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b010 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BP, .index = .SI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b011 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BP, .index = .DI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b100 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .index = .SI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b101 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .index = .DI, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b110 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BP, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                    0b111 => return .{ .mov_reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = .{ .base = .BX, .displacement = displacement },
-                        .dst = dst,
-                    } },
-                }
+                    },
+                };
             },
         }
     }
