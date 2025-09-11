@@ -113,7 +113,7 @@ const Instruction = union(enum) {
 const EffectiveAddress = struct {
     base: ?Register = null,
     index: ?Register = null,
-    displacement: ?u16 = null,
+    displacement: u16 = 0,
 
     pub fn format(effective_addr: EffectiveAddress, writer: *std.io.Writer) std.io.Writer.Error!void {
         if (effective_addr.base) |base| {
@@ -122,15 +122,15 @@ const EffectiveAddress = struct {
             } else {
                 try writer.print("[{s}", .{base.lowercase_repr()});
             }
-            if (effective_addr.displacement != null and effective_addr.displacement.? != 0) {
-                try writer.print(" + {d}]", .{effective_addr.displacement.?});
+            if (effective_addr.displacement != 0) {
+                try writer.print(" + {d}]", .{effective_addr.displacement});
             } else {
                 try writer.print("]", .{});
             }
         } else {
             if (effective_addr.index) |index| {
-                if (effective_addr.displacement) |displacement| {
-                    try writer.print("[{s} + {d}]", .{ index.lowercase_repr(), displacement });
+                if (effective_addr.displacement != 0) {
+                    try writer.print("[{s} + {d}]", .{ index.lowercase_repr(), effective_addr.displacement });
                 } else {
                     try writer.print("[{d}]", .{index});
                 }
