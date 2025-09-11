@@ -99,13 +99,13 @@ const MovImmediateToReg = struct {
 const Instruction = union(enum) {
     mov_reg_to_reg: MovRegToReg,
     mov_reg_to_from_effective_address: MovRegToFromEffectiveAddress,
-    immediate_to_reg: MovImmediateToReg,
+    mov_immediate_to_reg: MovImmediateToReg,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (this) {
             .mov_reg_to_reg => |inst| try writer.print("{f}", .{inst}),
             .mov_reg_to_from_effective_address => |inst| try writer.print("{f}", .{inst}),
-            .immediate_to_reg => |inst| try writer.print("{f}", .{inst}),
+            .mov_immediate_to_reg => |inst| try writer.print("{f}", .{inst}),
         }
     }
 };
@@ -290,7 +290,7 @@ const Decoder = struct {
             },
         };
         const reg: Register = @enumFromInt((@as(u8, @intCast(fb.w)) << 3) | @as(u8, @intCast(fb.reg)));
-        return .{ .immediate_to_reg = .{ .reg = reg, .immediate = immediate } };
+        return .{ .mov_immediate_to_reg = .{ .reg = reg, .immediate = immediate } };
     }
 
     const NextByteError = error{
