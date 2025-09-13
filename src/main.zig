@@ -179,31 +179,16 @@ const EffectiveAddress = struct {
 
         if (effective_addr.displacement != 0) {
             if (plus_needed) {
-                try writer.print(" + ", .{});
+                if (effective_addr.displacement > 0) {
+                    try writer.print(" + {d}", .{effective_addr.displacement});
+                } else {
+                    try writer.print(" - {d}", .{@abs(effective_addr.displacement)});
+                }
+            } else {
+                try writer.print("{d}", .{effective_addr.displacement});
             }
-            try writer.print("{d}", .{effective_addr.displacement});
         }
         try writer.print("]", .{});
-        // if (effective_addr.base) |base| {
-        //     if (effective_addr.index) |index| {
-        //         try writer.print("[{s} + {s}", .{ base.lowercaseRepr(), index.lowercaseRepr() });
-        //     } else {
-        //         try writer.print("[{s}", .{base.lowercaseRepr()});
-        //     }
-        //     if (effective_addr.displacement != 0) {
-        //         try writer.print(" + {d}]", .{effective_addr.displacement});
-        //     } else {
-        //         try writer.print("]", .{});
-        //     }
-        // } else {
-        //     if (effective_addr.index) |index| {
-        //         if (effective_addr.displacement != 0) {
-        //             try writer.print("[{s} + {d}]", .{ index.lowercaseRepr(), effective_addr.displacement });
-        //         } else {
-        //             try writer.print("[{d}]", .{index});
-        //         }
-        //     }
-        // }
     }
 };
 
@@ -344,6 +329,16 @@ const Decoder = struct {
         };
     }
 
+    fn signExtend8BitDisplacement(displacement: u8) i16 {
+        const sign_bit: u1 = @intCast(displacement >> 7);
+
+        var sign_ext_data: [2]u8 = .{ displacement, 0x00 };
+        if (sign_bit == 0b1) {
+            sign_ext_data[1] = 0xFF;
+        }
+        return @bitCast(sign_ext_data);
+    }
+
     fn decodeEffectiveAddressCommon(decoder: *Decoder, mod: u2, rm: u3) !EffectiveAddress {
         switch (@as(ModMode, @enumFromInt(mod))) {
             .register_mode => {
@@ -368,7 +363,7 @@ const Decoder = struct {
                 };
             },
             .memory_mode_8_bit_displacement => {
-                const displacement: i16 = @intCast(try decoder.nextByte());
+                const displacement: i16 = signExtend8BitDisplacement(try decoder.nextByte());
                 return switch (rm) {
                     0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
                     0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
@@ -453,7 +448,7 @@ const Decoder = struct {
                 };
             },
             .memory_mode_8_bit_displacement => {
-                const displacement: i16 = @intCast(decoder.nextByte() catch return null);
+                const displacement: i16 = signExtend8BitDisplacement(decoder.nextByte() catch return null);
                 const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
                 const effective_address: EffectiveAddress = switch (sb.rm) {
                     0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
