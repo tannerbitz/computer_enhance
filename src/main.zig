@@ -144,6 +144,9 @@ const Instruction = union(enum) {
     mov_memory_to_accumulator: MemoryToAccumulator,
     mov_accumulator_to_memory: AccumulatorToMemory,
 
+    add_reg_to_reg: RegToReg,
+    add_reg_to_from_effective_address: RegToFromEffectiveAddress,
+
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (this) {
             .mov_reg_to_reg => |inst| try writer.print("mov {f}", .{inst}),
@@ -152,6 +155,9 @@ const Instruction = union(enum) {
             .mov_immediate_to_effective_address => |inst| try writer.print("mov {f}", .{inst}),
             .mov_memory_to_accumulator => |inst| try writer.print("mov {f}", .{inst}),
             .mov_accumulator_to_memory => |inst| try writer.print("mov {f}", .{inst}),
+
+            .add_reg_to_reg => |inst| try writer.print("add {f}", .{inst}),
+            .add_reg_to_from_effective_address => |inst| try writer.print("add {f}", .{inst}),
         }
     }
 };
@@ -198,6 +204,8 @@ const MovImmediateToRegOrMemOpCode = 0b1100011;
 const MovMemoryToAccumulatorOpCode = 0b1010000;
 const MovAccumulatorToMemoryOpCode = 0b1010001;
 
+const AddRegMemWithRegToEitherOpCode = 0b000000;
+
 const Decoder = struct {
     buffer: []const u8,
     pos: isize,
@@ -214,6 +222,7 @@ const Decoder = struct {
 
     pub fn nextInstruction(decoder: *Decoder) ?Instruction {
         const first_byte: u8 = decoder.nextByte() catch return null;
+        // mov
         if (first_byte >> 2 == MovRegMemToFromRegOpCode) {
             return decoder.decodeMovRegMemToFromReg(first_byte);
         }
@@ -229,6 +238,12 @@ const Decoder = struct {
         if (first_byte >> 1 == MovAccumulatorToMemoryOpCode) {
             return decoder.decodeMovAccumulatorToMemory(first_byte);
         }
+
+        // add
+        if (first_byte >> 2 == AddRegMemWithRegToEitherOpCode) {
+            return decoder.decodeAddRegMemWithRegToEither(first_byte);
+        }
+
         return null;
     }
 
@@ -393,16 +408,27 @@ const Decoder = struct {
         }
     }
 
-    fn decodeMovRegMemToFromReg(decoder: *Decoder, first_byte: u8) ?Instruction {
+    pub fn decodeAddRegMemWithRegToEither(decoder: *Decoder, first_byte: u8) ?Instruction {
+        return switch (decoder.decodeRegMemToFromRegCommon(first_byte) catch return null) {
+            .reg_to_reg => |r2r| .{ .add_reg_to_reg = r2r },
+            .reg_to_from_effective_address => |rm_to_from_effective_addr| .{ .add_reg_to_from_effective_address = rm_to_from_effective_addr },
+        };
+    }
+
+    const RegMemToFromRegReturnType = union(enum) {
+        reg_to_reg: RegToReg,
+        reg_to_from_effective_address: RegToFromEffectiveAddress,
+    };
+
+    fn decodeRegMemToFromRegCommon(decoder: *Decoder, first_byte: u8) !RegMemToFromRegReturnType {
         const FirstByte = packed struct {
             w_bit: u1,
             d_bit: u1,
             op_code: u6,
         };
         const fb: FirstByte = @bitCast(first_byte);
-        std.debug.assert(fb.op_code == MovRegMemToFromRegOpCode);
 
-        const second_byte = decoder.nextByte() catch return null;
+        const second_byte = try decoder.nextByte();
         const SecondByte = packed struct {
             rm: u3,
             reg: u3,
@@ -416,9 +442,9 @@ const Decoder = struct {
             .register_mode => {
                 const rm: Register = @enumFromInt((@as(u8, @intCast(fb.w_bit)) << 3) | @as(u8, @intCast(sb.rm)));
                 if (fb.d_bit == 0b0) {
-                    return .{ .mov_reg_to_reg = .{ .src = reg, .dst = rm } };
+                    return .{ .reg_to_reg = .{ .src = reg, .dst = rm } };
                 } else {
-                    return .{ .mov_reg_to_reg = .{ .src = rm, .dst = reg } };
+                    return .{ .reg_to_reg = .{ .src = rm, .dst = reg } };
                 }
             },
             .memory_mode_no_displacement_usually => {
@@ -432,15 +458,15 @@ const Decoder = struct {
                     0b101 => .{ .index = .DI },
                     0b110 => {
                         // direct address
-                        const low_byte = decoder.nextByte() catch return null;
-                        const high_byte = decoder.nextByte() catch return null;
+                        const low_byte = try decoder.nextByte();
+                        const high_byte = try decoder.nextByte();
                         const displacement: i16 = @as(i16, @intCast(high_byte)) << 8 | @as(i16, @intCast(low_byte));
                         break :ea .{ .displacement = displacement };
                     },
                     0b111 => .{ .base = .BX },
                 };
                 return .{
-                    .mov_reg_to_from_effective_address = .{
+                    .reg_to_from_effective_address = .{
                         .reg = reg,
                         .effective_address = effective_address,
                         .dst = dst,
@@ -448,7 +474,7 @@ const Decoder = struct {
                 };
             },
             .memory_mode_8_bit_displacement => {
-                const displacement: i16 = signExtend8BitDisplacement(decoder.nextByte() catch return null);
+                const displacement: i16 = signExtend8BitDisplacement(try decoder.nextByte());
                 const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
                 const effective_address: EffectiveAddress = switch (sb.rm) {
                     0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
@@ -461,7 +487,7 @@ const Decoder = struct {
                     0b111 => .{ .base = .BX, .displacement = displacement },
                 };
                 return .{
-                    .mov_reg_to_from_effective_address = .{
+                    .reg_to_from_effective_address = .{
                         .reg = reg,
                         .effective_address = effective_address,
                         .dst = dst,
@@ -469,8 +495,8 @@ const Decoder = struct {
                 };
             },
             .memory_mode_16_bit_displacement => {
-                const low_byte = decoder.nextByte() catch return null;
-                const high_byte = decoder.nextByte() catch return null;
+                const low_byte = try decoder.nextByte();
+                const high_byte = try decoder.nextByte();
                 const displacement: i16 = @as(i16, @intCast(high_byte)) << 8 | @as(i16, @intCast(low_byte));
                 const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
                 const effective_address: EffectiveAddress = switch (sb.rm) {
@@ -484,7 +510,7 @@ const Decoder = struct {
                     0b111 => .{ .base = .BX, .displacement = displacement },
                 };
                 return .{
-                    .mov_reg_to_from_effective_address = .{
+                    .reg_to_from_effective_address = .{
                         .reg = reg,
                         .effective_address = effective_address,
                         .dst = dst,
@@ -492,6 +518,13 @@ const Decoder = struct {
                 };
             },
         }
+    }
+
+    fn decodeMovRegMemToFromReg(decoder: *Decoder, first_byte: u8) ?Instruction {
+        return switch (decoder.decodeRegMemToFromRegCommon(first_byte) catch return null) {
+            .reg_to_reg => |r2r| .{ .mov_reg_to_reg = r2r },
+            .reg_to_from_effective_address => |rm_to_from_effective_addr| .{ .mov_reg_to_from_effective_address = rm_to_from_effective_addr },
+        };
     }
 
     pub fn decodeMovImmediateToReg(decoder: *Decoder, first_byte: u8) ?Instruction {
