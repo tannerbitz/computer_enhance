@@ -447,68 +447,9 @@ const Decoder = struct {
                     return .{ .reg_to_reg = .{ .src = rm, .dst = reg } };
                 }
             },
-            .memory_mode_no_displacement_usually => {
+            else => {
                 const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                const effective_address: EffectiveAddress = ea: switch (sb.rm) {
-                    0b000 => .{ .base = .BX, .index = .SI },
-                    0b001 => .{ .base = .BX, .index = .DI },
-                    0b010 => .{ .base = .BP, .index = .SI },
-                    0b011 => .{ .base = .BP, .index = .DI },
-                    0b100 => .{ .index = .SI },
-                    0b101 => .{ .index = .DI },
-                    0b110 => {
-                        // direct address
-                        const low_byte = try decoder.nextByte();
-                        const high_byte = try decoder.nextByte();
-                        const displacement: i16 = @as(i16, @intCast(high_byte)) << 8 | @as(i16, @intCast(low_byte));
-                        break :ea .{ .displacement = displacement };
-                    },
-                    0b111 => .{ .base = .BX },
-                };
-                return .{
-                    .reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = effective_address,
-                        .dst = dst,
-                    },
-                };
-            },
-            .memory_mode_8_bit_displacement => {
-                const displacement: i16 = signExtend8BitDisplacement(try decoder.nextByte());
-                const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                const effective_address: EffectiveAddress = switch (sb.rm) {
-                    0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
-                    0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
-                    0b010 => .{ .base = .BP, .index = .SI, .displacement = displacement },
-                    0b011 => .{ .base = .BP, .index = .DI, .displacement = displacement },
-                    0b100 => .{ .index = .SI, .displacement = displacement },
-                    0b101 => .{ .index = .DI, .displacement = displacement },
-                    0b110 => .{ .base = .BP, .displacement = displacement },
-                    0b111 => .{ .base = .BX, .displacement = displacement },
-                };
-                return .{
-                    .reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = effective_address,
-                        .dst = dst,
-                    },
-                };
-            },
-            .memory_mode_16_bit_displacement => {
-                const low_byte = try decoder.nextByte();
-                const high_byte = try decoder.nextByte();
-                const displacement: i16 = @as(i16, @intCast(high_byte)) << 8 | @as(i16, @intCast(low_byte));
-                const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                const effective_address: EffectiveAddress = switch (sb.rm) {
-                    0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
-                    0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
-                    0b010 => .{ .base = .BP, .index = .SI, .displacement = displacement },
-                    0b011 => .{ .base = .BP, .index = .DI, .displacement = displacement },
-                    0b100 => .{ .index = .SI, .displacement = displacement },
-                    0b101 => .{ .index = .DI, .displacement = displacement },
-                    0b110 => .{ .base = .BP, .displacement = displacement },
-                    0b111 => .{ .base = .BX, .displacement = displacement },
-                };
+                const effective_address: EffectiveAddress = try decoder.decodeEffectiveAddressCommon(sb.mod, sb.rm);
                 return .{
                     .reg_to_from_effective_address = .{
                         .reg = reg,
