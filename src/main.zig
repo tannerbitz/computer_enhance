@@ -57,12 +57,12 @@ const Register = enum(u8) {
     }
 };
 
-const MovRegToReg = struct {
+const RegToReg = struct {
     src: Register,
     dst: Register,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("mov {s}, {s}", .{ this.dst.lowercaseRepr(), this.src.lowercaseRepr() });
+        try writer.print("{s}, {s}", .{ this.dst.lowercaseRepr(), this.src.lowercaseRepr() });
     }
 };
 
@@ -72,27 +72,27 @@ const MovOperandType = enum {
     direct_address,
 };
 
-const MovRegToFromEffectiveAddress = struct {
+const RegToFromEffectiveAddress = struct {
     reg: Register,
     effective_address: EffectiveAddress,
     dst: MovOperandType,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         return if (this.dst == .register) {
-            try writer.print("mov {s}, {f}", .{ this.reg.lowercaseRepr(), this.effective_address });
+            try writer.print("{s}, {f}", .{ this.reg.lowercaseRepr(), this.effective_address });
         } else {
-            try writer.print("mov {f}, {s}", .{ this.effective_address, this.reg.lowercaseRepr() });
+            try writer.print("{f}, {s}", .{ this.effective_address, this.reg.lowercaseRepr() });
         };
     }
 };
 
-const MovImmediateToReg = struct {
+const ImmediateToReg = struct {
     reg: Register,
     immediate: u16,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         // TODO: probably need to add byte, word size based on register width
-        try writer.print("mov {s}, {d}", .{ this.reg.lowercaseRepr(), this.immediate });
+        try writer.print("{s}, {d}", .{ this.reg.lowercaseRepr(), this.immediate });
     }
 };
 
@@ -108,50 +108,50 @@ const ImmediateWidth = enum {
     }
 };
 
-const MovImmediateToEffectiveAddress = struct {
+const ImmediateToEffectiveAddress = struct {
     effective_address: EffectiveAddress,
     immediate: u16,
     width: ImmediateWidth,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("mov {f}, {s} {d}", .{ this.effective_address, this.width.asString(), this.immediate });
+        try writer.print("{f}, {s} {d}", .{ this.effective_address, this.width.asString(), this.immediate });
     }
 };
 
-const MovMemoryToAccumulator = struct {
+const MemoryToAccumulator = struct {
     reg: Register,
     address: u16,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("mov {s}, [{d}]", .{ this.reg.lowercaseRepr(), this.address });
+        try writer.print("{s}, [{d}]", .{ this.reg.lowercaseRepr(), this.address });
     }
 };
 
-const MovAccumulatorToMemory = struct {
+const AccumulatorToMemory = struct {
     reg: Register,
     address: u16,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("mov [{d}], {s}", .{ this.address, this.reg.lowercaseRepr() });
+        try writer.print("[{d}], {s}", .{ this.address, this.reg.lowercaseRepr() });
     }
 };
 
 const Instruction = union(enum) {
-    mov_reg_to_reg: MovRegToReg,
-    mov_reg_to_from_effective_address: MovRegToFromEffectiveAddress,
-    mov_immediate_to_reg: MovImmediateToReg,
-    mov_immediate_to_effective_address: MovImmediateToEffectiveAddress,
-    mov_memory_to_accumulator: MovMemoryToAccumulator,
-    mov_accumulator_to_memory: MovAccumulatorToMemory,
+    mov_reg_to_reg: RegToReg,
+    mov_reg_to_from_effective_address: RegToFromEffectiveAddress,
+    mov_immediate_to_reg: ImmediateToReg,
+    mov_immediate_to_effective_address: ImmediateToEffectiveAddress,
+    mov_memory_to_accumulator: MemoryToAccumulator,
+    mov_accumulator_to_memory: AccumulatorToMemory,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (this) {
-            .mov_reg_to_reg => |inst| try writer.print("{f}", .{inst}),
-            .mov_reg_to_from_effective_address => |inst| try writer.print("{f}", .{inst}),
-            .mov_immediate_to_reg => |inst| try writer.print("{f}", .{inst}),
-            .mov_immediate_to_effective_address => |inst| try writer.print("{f}", .{inst}),
-            .mov_memory_to_accumulator => |inst| try writer.print("{f}", .{inst}),
-            .mov_accumulator_to_memory => |inst| try writer.print("{f}", .{inst}),
+            .mov_reg_to_reg => |inst| try writer.print("mov {f}", .{inst}),
+            .mov_reg_to_from_effective_address => |inst| try writer.print("mov {f}", .{inst}),
+            .mov_immediate_to_reg => |inst| try writer.print("mov {f}", .{inst}),
+            .mov_immediate_to_effective_address => |inst| try writer.print("mov {f}", .{inst}),
+            .mov_memory_to_accumulator => |inst| try writer.print("mov {f}", .{inst}),
+            .mov_accumulator_to_memory => |inst| try writer.print("mov {f}", .{inst}),
         }
     }
 };
