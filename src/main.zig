@@ -57,46 +57,74 @@ const Register = enum(u8) {
     }
 };
 
-const RegToReg = struct {
-    src: Register,
-    dst: Register,
+const DirectAddress = struct {
+    address: u16,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("{s}, {s}", .{ this.dst.lowercaseRepr(), this.src.lowercaseRepr() });
+        try writer.print("[{d}]", .{this.address});
     }
 };
 
-const MovOperandType = enum {
-    register,
-    effective_address,
-    direct_address,
-};
-
-const RegToFromEffectiveAddress = struct {
+const Operand = union(enum) {
     reg: Register,
     effective_address: EffectiveAddress,
-    dst: MovOperandType,
+    direct_address: DirectAddress,
+    immediate: i32, // this has to be a signed 32 bit value because it need to be able to hold the
+    // most negative value a 16 bit signed extension value of an 8 bit value can be => -128
+    // and it must be able to most the most positive value of a 16 bit unsigned int value
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        return if (this.dst == .register) {
-            try writer.print("{s}, {f}", .{ this.reg.lowercaseRepr(), this.effective_address });
-        } else {
-            try writer.print("{f}, {s}", .{ this.effective_address, this.reg.lowercaseRepr() });
+        switch (this) {
+            .reg => |val| try writer.print("{s}", .{val.lowercaseRepr()}),
+            .effective_address => |val| try writer.print("{f}", .{val}),
+            .direct_address => |val| try writer.print("{f}", .{val}),
+            .immediate => |val| try writer.print("{d}", .{val}),
+        }
+    }
+
+    pub fn hasKnownSize(operand: Operand) bool {
+        return switch (operand) {
+            .reg => true,
+
+            .effective_address, .direct_address, .immediate => false,
         };
     }
 };
 
-const ImmediateToReg = struct {
-    reg: Register,
-    immediate: u16,
+const Operation = enum {
+    mov,
+    add,
+    sub,
+    cmp,
 
-    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        // TODO: probably need to add byte, word size based on register width
-        try writer.print("{s}, {d}", .{ this.reg.lowercaseRepr(), this.immediate });
+    pub fn asString(op: Operation) []const u8 {
+        switch (op) {
+            .mov => return "mov",
+            .add => return "add",
+            .sub => return "sub",
+            .cmp => return "cmp",
+        }
     }
 };
 
-const ImmediateWidth = enum {
+const Instruction = struct {
+    op: Operation,
+    src: Operand,
+    dst: Operand,
+    width: OperationWidth,
+
+    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+        const width_needed = !this.src.hasKnownSize() and !this.dst.hasKnownSize();
+
+        if (width_needed) {
+            try writer.print("{s} {s} {f}, {f}", .{ this.op.asString(), this.width.asString(), this.dst, this.src });
+        } else {
+            try writer.print("{s} {f}, {f}", .{ this.op.asString(), this.dst, this.src });
+        }
+    }
+};
+
+const OperationWidth = enum {
     byte,
     word,
 
@@ -108,93 +136,42 @@ const ImmediateWidth = enum {
     }
 };
 
-const ImmediateToEffectiveAddress = struct {
-    effective_address: EffectiveAddress,
-    immediate: u16,
-    width: ImmediateWidth,
+const EffectiveAddress = struct {
+    base_index: EffectiveAddressBaseIndex,
+    displacement: i16,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("{f}, {s} {d}", .{ this.effective_address, this.width.asString(), this.immediate });
+        if (this.displacement == 0) {
+            try writer.print("[{f}]", .{this.base_index});
+        } else if (this.displacement > 0) {
+            try writer.print("[{f} + {d}]", .{ this.base_index, this.displacement });
+        } else {
+            try writer.print("[{f} - {d}]", .{ this.base_index, @abs(this.displacement) });
+        }
     }
 };
 
-const MemoryToAccumulator = struct {
-    reg: Register,
-    address: u16,
-
-    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("{s}, [{d}]", .{ this.reg.lowercaseRepr(), this.address });
-    }
-};
-
-const AccumulatorToMemory = struct {
-    reg: Register,
-    address: u16,
-
-    pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("[{d}], {s}", .{ this.address, this.reg.lowercaseRepr() });
-    }
-};
-
-const Instruction = union(enum) {
-    mov_reg_to_reg: RegToReg,
-    mov_reg_to_from_effective_address: RegToFromEffectiveAddress,
-    mov_immediate_to_reg: ImmediateToReg,
-    mov_immediate_to_effective_address: ImmediateToEffectiveAddress,
-    mov_memory_to_accumulator: MemoryToAccumulator,
-    mov_accumulator_to_memory: AccumulatorToMemory,
-
-    add_reg_to_reg: RegToReg,
-    add_reg_to_from_effective_address: RegToFromEffectiveAddress,
+const EffectiveAddressBaseIndex = enum(u3) {
+    bx_si = 0b000,
+    bx_di = 0b001,
+    bp_si = 0b010,
+    bp_di = 0b011,
+    si = 0b100,
+    di = 0b101,
+    bp = 0b110,
+    bx = 0b111,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (this) {
-            .mov_reg_to_reg => |inst| try writer.print("mov {f}", .{inst}),
-            .mov_reg_to_from_effective_address => |inst| try writer.print("mov {f}", .{inst}),
-            .mov_immediate_to_reg => |inst| try writer.print("mov {f}", .{inst}),
-            .mov_immediate_to_effective_address => |inst| try writer.print("mov {f}", .{inst}),
-            .mov_memory_to_accumulator => |inst| try writer.print("mov {f}", .{inst}),
-            .mov_accumulator_to_memory => |inst| try writer.print("mov {f}", .{inst}),
-
-            .add_reg_to_reg => |inst| try writer.print("add {f}", .{inst}),
-            .add_reg_to_from_effective_address => |inst| try writer.print("add {f}", .{inst}),
+            .bx_si => try writer.print("bx + si", .{}),
+            .bx_di => try writer.print("bx + di", .{}),
+            .bp_si => try writer.print("bp + si", .{}),
+            .bp_di => try writer.print("bp + di", .{}),
+            .si => try writer.print("si", .{}),
+            .di => try writer.print("di", .{}),
+            .bp => try writer.print("bp", .{}),
+            .bx => try writer.print("bx", .{}),
         }
-    }
-};
-
-const EffectiveAddress = struct {
-    base: ?Register = null,
-    index: ?Register = null,
-    displacement: i16 = 0,
-
-    pub fn format(effective_addr: EffectiveAddress, writer: *std.io.Writer) std.io.Writer.Error!void {
-        try writer.print("[", .{});
-        var plus_needed = false;
-        if (effective_addr.base) |base| {
-            try writer.print("{s}", .{base.lowercaseRepr()});
-            plus_needed = true;
-        }
-
-        if (effective_addr.index) |index| {
-            if (plus_needed) {
-                try writer.print(" + ", .{});
-            }
-            try writer.print("{s}", .{index.lowercaseRepr()});
-            plus_needed = true;
-        }
-
-        if (effective_addr.displacement != 0) {
-            if (plus_needed) {
-                if (effective_addr.displacement > 0) {
-                    try writer.print(" + {d}", .{effective_addr.displacement});
-                } else {
-                    try writer.print(" - {d}", .{@abs(effective_addr.displacement)});
-                }
-            } else {
-                try writer.print("{d}", .{effective_addr.displacement});
-            }
-        }
-        try writer.print("]", .{});
     }
 };
 
@@ -205,6 +182,14 @@ const MovMemoryToAccumulatorOpCode = 0b1010000;
 const MovAccumulatorToMemoryOpCode = 0b1010001;
 
 const AddRegMemWithRegToEitherOpCode = 0b000000;
+const CommonImmediateToRegMemOpCode = 0b100000;
+const AddImmediateToAccumulatorOpCode = 0b0000010;
+
+const SubRegMemWithRegToEitherOpCode = 0b001010;
+const SubImmediateFromAccumulatorOpCode = 0b0010110;
+
+const CmpRegMemAndRegOpCode = 0b001110;
+const CmpImmediateAndAccumulatorOpCode = 0b0011110;
 
 const Decoder = struct {
     buffer: []const u8,
@@ -220,34 +205,170 @@ const Decoder = struct {
         };
     }
 
-    pub fn nextInstruction(decoder: *Decoder) ?Instruction {
+    pub fn nextInstruction(decoder: *Decoder) !?Instruction {
         const first_byte: u8 = decoder.nextByte() catch return null;
         // mov
         if (first_byte >> 2 == MovRegMemToFromRegOpCode) {
-            return decoder.decodeMovRegMemToFromReg(first_byte);
+            return try decoder.decodeMovRegMemToFromReg(first_byte);
         }
         if (first_byte >> 4 == MovImmediateToRegOpCode) {
-            return decoder.decodeMovImmediateToReg(first_byte);
+            return try decoder.decodeMovImmediateToReg(first_byte);
         }
         if (first_byte >> 1 == MovImmediateToRegOrMemOpCode) {
-            return decoder.decodeMovImmediateToRegOrMem(first_byte);
+            return try decoder.decodeMovImmediateToRegOrMem(first_byte);
         }
         if (first_byte >> 1 == MovMemoryToAccumulatorOpCode) {
-            return decoder.decodeMovMemoryToAccumulator(first_byte);
+            return try decoder.decodeMovMemoryToAccumulator(first_byte);
         }
         if (first_byte >> 1 == MovAccumulatorToMemoryOpCode) {
-            return decoder.decodeMovAccumulatorToMemory(first_byte);
+            return try decoder.decodeMovAccumulatorToMemory(first_byte);
         }
 
         // add
         if (first_byte >> 2 == AddRegMemWithRegToEitherOpCode) {
-            return decoder.decodeAddRegMemWithRegToEither(first_byte);
+            return try decoder.decodeAddRegMemWithRegToEither(first_byte);
+        }
+        if (first_byte >> 2 == CommonImmediateToRegMemOpCode) {
+            return try decoder.decodeImmediateToRegMemCommon(first_byte);
+        }
+        if (first_byte >> 1 == AddImmediateToAccumulatorOpCode) {
+            return try decoder.decodeAddImmediateToAccumulator(first_byte);
         }
 
-        return null;
+        // sub
+        if (first_byte >> 2 == SubRegMemWithRegToEitherOpCode) {
+            return try decoder.decodeSubRegMemWithRegToEither(first_byte);
+        }
+        if (first_byte >> 1 == SubImmediateFromAccumulatorOpCode) {
+            return try decoder.decodeSubImmediateFromAccumulator(first_byte);
+        }
+
+        // cmp
+        if (first_byte >> 2 == CmpRegMemAndRegOpCode) {
+            return try decoder.decodeCmpRegMemAndMem(first_byte);
+        }
+        if (first_byte >> 1 == CmpImmediateAndAccumulatorOpCode) {
+            return try decoder.decodeCmpImmediateAndAccumulator(first_byte);
+        }
+
+        return error.NoOpCodeMatch;
     }
 
-    fn decodeMovAccumulatorToMemory(decoder: *Decoder, first_byte: u8) ?Instruction {
+    fn decodeCmpImmediateAndAccumulator(decoder: *Decoder, first_byte: u8) !Instruction {
+        const FirstByte = packed struct {
+            w_bit: u1,
+            op_code: u7,
+        };
+
+        const fb: FirstByte = @bitCast(first_byte);
+        const is_wide: bool = (fb.w_bit == 0b1);
+
+        const immediate_low_byte: u16 = @as(u16, try decoder.nextByte());
+        var immediate: i32 = undefined;
+        if (is_wide) {
+            const immediate_high_byte: u16 = @as(u16, try decoder.nextByte()) << 8;
+            immediate = @intCast(immediate_high_byte | immediate_low_byte);
+        } else {
+            immediate = @intCast(immediate_low_byte);
+        }
+
+        return .{
+            .op = .cmp,
+            .dst = .{ .reg = if (is_wide) .AX else .AL },
+            .src = .{ .immediate = immediate },
+            .width = if (is_wide) .word else .byte,
+        };
+    }
+
+    fn decodeImmediateToRegMemCommon(decoder: *Decoder, first_byte: u8) !Instruction {
+        const FirstByte = packed struct {
+            w_bit: u1,
+            s_bit: u1,
+            op_code: u6,
+        };
+
+        const fb: FirstByte = @bitCast(first_byte);
+
+        const is_wide: bool = (fb.w_bit == 0b1);
+        const needs_sign_extension = is_wide and fb.s_bit == 0b1;
+
+        const SecondByte = packed struct {
+            rm: u3,
+            op_constant: u3,
+            mod: u2,
+        };
+        const second_byte = try decoder.nextByte();
+        const sb: SecondByte = @bitCast(second_byte);
+
+        const dst_operand = try decoder.decodeRegMemCommon(fb.w_bit, sb.mod, sb.rm);
+
+        var immediate: i32 = undefined;
+        const immediate_low_byte = try decoder.nextByte();
+        if (!is_wide) {
+            immediate = @intCast(immediate_low_byte);
+        } else {
+            if (needs_sign_extension) {
+                immediate = @intCast(signExtend8BitDisplacement(immediate_low_byte));
+            } else {
+                const immediate_high_byte: u16 = @as(u16, try decoder.nextByte()) << 8;
+                const immediate_unsigned: u16 = immediate_high_byte | @as(u16, immediate_low_byte);
+                immediate = @intCast(immediate_unsigned);
+            }
+        }
+
+        const op: Operation = switch (sb.op_constant) {
+            0b000 => .add,
+            0b101 => .sub,
+            0b111 => .cmp,
+            else => unreachable,
+        };
+
+        return Instruction{
+            .op = op,
+            .dst = dst_operand,
+            .src = .{ .immediate = immediate },
+            .width = if (is_wide) .word else .byte,
+        };
+    }
+
+    fn decodeSubImmediateFromAccumulator(decoder: *Decoder, first_byte: u8) !Instruction {
+        var instruction = try decoder.decodeImmediateToAccumulatorCommon(first_byte);
+        instruction.op = .sub;
+        return instruction;
+    }
+
+    fn decodeAddImmediateToAccumulator(decoder: *Decoder, first_byte: u8) !Instruction {
+        var instruction = try decoder.decodeImmediateToAccumulatorCommon(first_byte);
+        instruction.op = .add;
+        return instruction;
+    }
+
+    fn decodeImmediateToAccumulatorCommon(decoder: *Decoder, first_byte: u8) !Instruction {
+        const FirstByte = packed struct {
+            w_bit: u1,
+            op_code: u7,
+        };
+        const fb: FirstByte = @bitCast(first_byte);
+        const is_wide = fb.w_bit == 0b1;
+
+        var immediate: i32 = undefined;
+        const immediate_low_byte: u8 = try decoder.nextByte();
+        if (is_wide) {
+            const immediate_high_byte: u8 = try decoder.nextByte();
+            immediate = @intCast(@as(u16, @intCast(immediate_high_byte)) << 8 | @as(u16, immediate_low_byte));
+        } else {
+            immediate = @intCast(immediate_low_byte);
+        }
+
+        return .{
+            .op = undefined,
+            .dst = .{ .reg = if (is_wide) .AX else .AL },
+            .src = .{ .immediate = immediate },
+            .width = if (is_wide) .word else .byte,
+        };
+    }
+
+    fn decodeMovAccumulatorToMemory(decoder: *Decoder, first_byte: u8) !Instruction {
         const FirstByte = packed struct {
             w_bit: u1,
             op_code: u7,
@@ -256,24 +377,26 @@ const Decoder = struct {
         std.debug.assert(fb.op_code == MovAccumulatorToMemoryOpCode);
         const is_wide = fb.w_bit == 0b1;
 
-        var address: u16 = undefined;
-        const address_low_byte: u8 = decoder.nextByte() catch return null;
+        const address_low_byte: u8 = try decoder.nextByte();
         if (is_wide) {
-            const address_high_byte: u8 = decoder.nextByte() catch return null;
-            address = @as(u16, @intCast(address_high_byte)) << 8 | @as(u16, @intCast(address_low_byte));
-        } else {
-            address = @intCast(address_low_byte);
+            const address_high_byte: u8 = try decoder.nextByte();
+            const address: u16 = @as(u16, @intCast(address_high_byte)) << 8 | @as(u16, @intCast(address_low_byte));
+            return Instruction{
+                .op = .mov,
+                .dst = .{ .direct_address = .{ .address = address } },
+                .src = .{ .reg = .AX },
+                .width = .word,
+            };
         }
-
-        return .{
-            .mov_accumulator_to_memory = .{
-                .reg = if (is_wide) .AX else .AL,
-                .address = address,
-            },
+        return Instruction{
+            .op = .mov,
+            .dst = .{ .direct_address = .{ .address = @intCast(address_low_byte) } },
+            .src = .{ .reg = .AL },
+            .width = .byte,
         };
     }
 
-    fn decodeMovMemoryToAccumulator(decoder: *Decoder, first_byte: u8) ?Instruction {
+    fn decodeMovMemoryToAccumulator(decoder: *Decoder, first_byte: u8) !Instruction {
         const FirstByte = packed struct {
             w_bit: u1,
             op_code: u7,
@@ -282,24 +405,26 @@ const Decoder = struct {
         std.debug.assert(fb.op_code == MovMemoryToAccumulatorOpCode);
         const is_wide = fb.w_bit == 0b1;
 
-        var address: u16 = undefined;
-        const address_low_byte: u8 = decoder.nextByte() catch return null;
+        const address_low_byte: u8 = try decoder.nextByte();
         if (is_wide) {
-            const address_high_byte: u8 = decoder.nextByte() catch return null;
-            address = @as(u16, @intCast(address_high_byte)) << 8 | @as(u16, @intCast(address_low_byte));
-        } else {
-            address = @intCast(address_low_byte);
+            const address_high_byte: u8 = try decoder.nextByte();
+            const address: u16 = @as(u16, @intCast(address_high_byte)) << 8 | @as(u16, @intCast(address_low_byte));
+            return Instruction{
+                .op = .mov,
+                .dst = .{ .reg = .AX },
+                .src = .{ .direct_address = .{ .address = address } },
+                .width = .word,
+            };
         }
-
-        return .{
-            .mov_memory_to_accumulator = .{
-                .reg = if (is_wide) .AX else .AL,
-                .address = address,
-            },
+        return Instruction{
+            .op = .mov,
+            .dst = .{ .reg = .AL },
+            .src = .{ .direct_address = .{ .address = @intCast(address_low_byte) } },
+            .width = .byte,
         };
     }
 
-    fn decodeMovImmediateToRegOrMem(decoder: *Decoder, first_byte: u8) ?Instruction {
+    fn decodeMovImmediateToRegOrMem(decoder: *Decoder, first_byte: u8) !Instruction {
         // this instruction copies a one or two byte immediate value to an effective
         // address. The total instruction length is either 5 or 6 bytes depending on the
         // width of the immediate/effective address to which it will be copied
@@ -321,27 +446,30 @@ const Decoder = struct {
             op_constant: u3,
             mod: u2,
         };
-        const second_byte = decoder.nextByte() catch return null;
+        const second_byte = try decoder.nextByte();
         const sb: SecondByte = @bitCast(second_byte);
         std.debug.assert(sb.op_constant == 0b000);
 
-        const effective_address = decoder.decodeEffectiveAddressCommon(sb.mod, sb.rm) catch return null;
+        const reg_or_mem = try decoder.decodeRegMemCommon(fb.w_bit, sb.mod, sb.rm);
 
-        var immediate: u16 = undefined;
-        const immediate_low_byte = decoder.nextByte() catch return null;
-        if (is_wide) {
-            const immediate_high_byte = decoder.nextByte() catch return null;
-            immediate = @as(u16, @intCast(immediate_high_byte)) << 8 | @as(u16, @intCast(immediate_low_byte));
-        } else {
-            immediate = @intCast(immediate_low_byte);
-        }
-        return .{
-            .mov_immediate_to_effective_address = .{
-                .effective_address = effective_address,
-                .immediate = immediate,
-                .width = if (is_wide) .word else .byte,
-            },
+        var instruction: Instruction = .{
+            .op = .mov,
+            .dst = reg_or_mem,
+            .src = undefined,
+            .width = undefined,
         };
+        const immediate_low_byte = try decoder.nextByte();
+        if (is_wide) {
+            const immediate_high_byte = try decoder.nextByte();
+            instruction.src = .{
+                .immediate = @intCast(@as(u16, @intCast(immediate_high_byte)) << 8 | @as(u16, @intCast(immediate_low_byte))),
+            };
+            instruction.width = .word;
+        } else {
+            instruction.src = .{ .immediate = @intCast(immediate_low_byte) };
+            instruction.width = .byte;
+        }
+        return instruction;
     }
 
     fn signExtend8BitDisplacement(displacement: u8) i16 {
@@ -354,73 +482,67 @@ const Decoder = struct {
         return @bitCast(sign_ext_data);
     }
 
-    fn decodeEffectiveAddressCommon(decoder: *Decoder, mod: u2, rm: u3) !EffectiveAddress {
+    fn decodeRegMemCommon(decoder: *Decoder, w_bit: u1, mod: u2, rm: u3) !Operand {
         switch (@as(ModMode, @enumFromInt(mod))) {
             .register_mode => {
-                return error.EffectiveAddressCalcShouldNotBeInRegisterMode;
+                return .{ .reg = @enumFromInt((@as(u8, @intCast(w_bit)) << 3) | @as(u8, @intCast(rm))) };
             },
             .memory_mode_no_displacement_usually => {
-                return ea: switch (rm) {
-                    0b000 => .{ .base = .BX, .index = .SI },
-                    0b001 => .{ .base = .BX, .index = .DI },
-                    0b010 => .{ .base = .BP, .index = .SI },
-                    0b011 => .{ .base = .BP, .index = .DI },
-                    0b100 => .{ .index = .SI },
-                    0b101 => .{ .index = .DI },
-                    0b110 => {
-                        // direct address
-                        const low_byte = try decoder.nextByte();
-                        const high_byte = try decoder.nextByte();
-                        const displacement: i16 = @as(i16, @intCast(high_byte)) << 8 | @as(i16, @intCast(low_byte));
-                        break :ea .{ .displacement = displacement };
+                if (rm == 0b110) { // direct addressing
+                    const low_byte = try decoder.nextByte();
+                    const high_byte = try decoder.nextByte();
+                    const direct_address: u16 = @as(u16, @intCast(high_byte)) << 8 | @as(u16, @intCast(low_byte));
+                    return .{ .direct_address = .{ .address = direct_address } };
+                }
+                return .{
+                    .effective_address = .{
+                        .base_index = @enumFromInt(rm),
+                        .displacement = 0,
                     },
-                    0b111 => .{ .base = .BX },
                 };
             },
             .memory_mode_8_bit_displacement => {
                 const displacement: i16 = signExtend8BitDisplacement(try decoder.nextByte());
-                return switch (rm) {
-                    0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
-                    0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
-                    0b010 => .{ .base = .BP, .index = .SI, .displacement = displacement },
-                    0b011 => .{ .base = .BP, .index = .DI, .displacement = displacement },
-                    0b100 => .{ .index = .SI, .displacement = displacement },
-                    0b101 => .{ .index = .DI, .displacement = displacement },
-                    0b110 => .{ .base = .BP, .displacement = displacement },
-                    0b111 => .{ .base = .BX, .displacement = displacement },
+                return .{
+                    .effective_address = .{
+                        .base_index = @enumFromInt(rm),
+                        .displacement = displacement,
+                    },
                 };
             },
             .memory_mode_16_bit_displacement => {
                 const low_byte = try decoder.nextByte();
                 const high_byte = try decoder.nextByte();
                 const displacement: i16 = @as(i16, @intCast(high_byte)) << 8 | @as(i16, @intCast(low_byte));
-                return switch (rm) {
-                    0b000 => .{ .base = .BX, .index = .SI, .displacement = displacement },
-                    0b001 => .{ .base = .BX, .index = .DI, .displacement = displacement },
-                    0b010 => .{ .base = .BP, .index = .SI, .displacement = displacement },
-                    0b011 => .{ .base = .BP, .index = .DI, .displacement = displacement },
-                    0b100 => .{ .index = .SI, .displacement = displacement },
-                    0b101 => .{ .index = .DI, .displacement = displacement },
-                    0b110 => .{ .base = .BP, .displacement = displacement },
-                    0b111 => .{ .base = .BX, .displacement = displacement },
+                return .{
+                    .effective_address = .{
+                        .base_index = @enumFromInt(rm),
+                        .displacement = displacement,
+                    },
                 };
             },
         }
     }
 
-    pub fn decodeAddRegMemWithRegToEither(decoder: *Decoder, first_byte: u8) ?Instruction {
-        return switch (decoder.decodeRegMemToFromRegCommon(first_byte) catch return null) {
-            .reg_to_reg => |r2r| .{ .add_reg_to_reg = r2r },
-            .reg_to_from_effective_address => |rm_to_from_effective_addr| .{ .add_reg_to_from_effective_address = rm_to_from_effective_addr },
-        };
+    pub fn decodeAddRegMemWithRegToEither(decoder: *Decoder, first_byte: u8) !Instruction {
+        var instruction = try decoder.decodeRegMemToFromRegCommon(first_byte);
+        instruction.op = .add;
+        return instruction;
     }
 
-    const RegMemToFromRegReturnType = union(enum) {
-        reg_to_reg: RegToReg,
-        reg_to_from_effective_address: RegToFromEffectiveAddress,
-    };
+    pub fn decodeCmpRegMemAndMem(decoder: *Decoder, first_byte: u8) !Instruction {
+        var instruction = try decoder.decodeRegMemToFromRegCommon(first_byte);
+        instruction.op = .cmp;
+        return instruction;
+    }
 
-    fn decodeRegMemToFromRegCommon(decoder: *Decoder, first_byte: u8) !RegMemToFromRegReturnType {
+    pub fn decodeSubRegMemWithRegToEither(decoder: *Decoder, first_byte: u8) !Instruction {
+        var instruction = try decoder.decodeRegMemToFromRegCommon(first_byte);
+        instruction.op = .sub;
+        return instruction;
+    }
+
+    fn decodeRegMemToFromRegCommon(decoder: *Decoder, first_byte: u8) !Instruction {
         const FirstByte = packed struct {
             w_bit: u1,
             d_bit: u1,
@@ -436,39 +558,35 @@ const Decoder = struct {
         };
 
         const sb: SecondByte = @bitCast(second_byte);
-        const reg: Register = @enumFromInt((@as(u8, @intCast(fb.w_bit)) << 3) | @as(u8, @intCast(sb.reg)));
-
-        switch (@as(ModMode, @enumFromInt(sb.mod))) {
-            .register_mode => {
-                const rm: Register = @enumFromInt((@as(u8, @intCast(fb.w_bit)) << 3) | @as(u8, @intCast(sb.rm)));
-                if (fb.d_bit == 0b0) {
-                    return .{ .reg_to_reg = .{ .src = reg, .dst = rm } };
-                } else {
-                    return .{ .reg_to_reg = .{ .src = rm, .dst = reg } };
-                }
-            },
-            else => {
-                const dst: MovOperandType = if (fb.d_bit == 0b0) .effective_address else .register;
-                const effective_address: EffectiveAddress = try decoder.decodeEffectiveAddressCommon(sb.mod, sb.rm);
-                return .{
-                    .reg_to_from_effective_address = .{
-                        .reg = reg,
-                        .effective_address = effective_address,
-                        .dst = dst,
-                    },
-                };
-            },
-        }
-    }
-
-    fn decodeMovRegMemToFromReg(decoder: *Decoder, first_byte: u8) ?Instruction {
-        return switch (decoder.decodeRegMemToFromRegCommon(first_byte) catch return null) {
-            .reg_to_reg => |r2r| .{ .mov_reg_to_reg = r2r },
-            .reg_to_from_effective_address => |rm_to_from_effective_addr| .{ .mov_reg_to_from_effective_address = rm_to_from_effective_addr },
+        const reg: Operand = .{
+            .reg = @enumFromInt((@as(u8, @intCast(fb.w_bit)) << 3) | @as(u8, @intCast(sb.reg))),
         };
+        const reg_or_mem = try decoder.decodeRegMemCommon(fb.w_bit, sb.mod, sb.rm);
+
+        var inst: Instruction = .{
+            .op = undefined,
+            .width = if (fb.w_bit == 0) .byte else .word,
+            .src = undefined,
+            .dst = undefined,
+        };
+        if (fb.d_bit == 0b0) {
+            inst.dst = reg_or_mem;
+            inst.src = reg;
+        } else {
+            inst.dst = reg;
+            inst.src = reg_or_mem;
+        }
+
+        return inst;
     }
 
-    pub fn decodeMovImmediateToReg(decoder: *Decoder, first_byte: u8) ?Instruction {
+    fn decodeMovRegMemToFromReg(decoder: *Decoder, first_byte: u8) !Instruction {
+        var instruction = try decoder.decodeRegMemToFromRegCommon(first_byte);
+        instruction.op = .mov;
+        return instruction;
+    }
+
+    pub fn decodeMovImmediateToReg(decoder: *Decoder, first_byte: u8) !Instruction {
         const FirstByte = packed struct {
             reg: u3,
             w: u1,
@@ -477,20 +595,27 @@ const Decoder = struct {
         const fb: FirstByte = @bitCast(first_byte);
         std.debug.assert(fb.op_code == MovImmediateToRegOpCode);
 
-        const immediate: u16 = sw: switch (fb.w) {
+        const reg: Register = @enumFromInt((@as(u8, @intCast(fb.w)) << 3) | @as(u8, @intCast(fb.reg)));
+        var instruction = Instruction{
+            .op = .mov,
+            .dst = .{ .reg = reg },
+            .src = undefined,
+            .width = undefined,
+        };
+        switch (fb.w) {
             0b0 => {
-                const val = decoder.nextByte() catch return null;
-                break :sw @as(u16, @intCast(val));
+                const val = try decoder.nextByte();
+                instruction.width = .byte;
+                instruction.src = .{ .immediate = signExtend8BitDisplacement(val) };
             },
             0b1 => {
-                var bytes: [2]u8 = undefined;
-                bytes[0] = decoder.nextByte() catch return null;
-                bytes[1] = decoder.nextByte() catch return null;
-                break :sw std.mem.bytesAsValue(u16, &bytes).*;
+                const immediate_low_byte: u16 = @as(u16, try decoder.nextByte());
+                const immediate_high_byte: u16 = @as(u16, try decoder.nextByte()) << 8;
+                instruction.width = .word;
+                instruction.src = .{ .immediate = @intCast(immediate_high_byte | immediate_low_byte) };
             },
-        };
-        const reg: Register = @enumFromInt((@as(u8, @intCast(fb.w)) << 3) | @as(u8, @intCast(fb.reg)));
-        return .{ .mov_immediate_to_reg = .{ .reg = reg, .immediate = immediate } };
+        }
+        return instruction;
     }
 
     const NextByteError = error{
@@ -538,7 +663,7 @@ pub fn main() !void {
 
     const args = try std.process.argsAlloc(allocator);
     if (args.len < 2) {
-        std.debug.print("Usage\n\n\tcomputer_enhance <filepath>\n", .{});
+        std.debug.print("Usage\n\n\tdecoder <filepath>\n", .{});
         return;
     }
 
@@ -553,21 +678,7 @@ pub fn main() !void {
 
     var decoder = try Decoder.init(contents);
 
-    var instruction = decoder.nextInstruction();
-    while (instruction != null) : (instruction = decoder.nextInstruction()) {
-        try asm_file.file_writer.interface.print("{f}\n", .{instruction.?});
+    while (try decoder.nextInstruction()) |instruction| {
+        try asm_file.file_writer.interface.print("{f}\n", .{instruction});
     }
-}
-
-test "decode" {
-    // first byte mov reg/mem to/from reg, d bit = 0b1 => reg is dst, w bit is 0b1 => wide registers
-    // mod = 0b11 -> reg to reg mov, reg = 0b010 => so wide reg is DX, rm = 0b101 => so wide reg is BP
-    const data: [2]u8 = .{ 0b10001011, 0b11010101 };
-
-    const expected_instruction = Instruction{ .mov_reg_to_reg = .{ .src = .BP, .dst = .DX } };
-
-    var decoder = try Decoder.init(&data);
-    const decoded_instruction = decoder.nextInstruction();
-    try std.testing.expect(decoded_instruction != null);
-    try std.testing.expectEqual(expected_instruction, decoded_instruction.?);
 }

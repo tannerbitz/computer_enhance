@@ -3,13 +3,13 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "type": "cppdbg",
+            "type": "codelldb",
             "request": "launch",
             "name": "decode my bytes",
-            "program": "${workspaceFolder}/zig-out/bin/computer_enhance",
+            "program": "${workspaceFolder}/zig-out/bin/decoder",
             "cwd": "${workspaceFolder}",
             "args": [
-                "${workspaceFolder}/../computer_enhance/perfaware/part1/listing_0039_more_movs"
+                "${workspaceFolder}/../computer_enhance/perfaware/part1/listing_0041_add_sub_cmp_jnz"
             ]
         }
     ]
