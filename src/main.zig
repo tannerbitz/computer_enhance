@@ -96,6 +96,26 @@ const Operation = enum {
     add,
     sub,
     cmp,
+    je,
+    jl,
+    jle,
+    jb,
+    jbe,
+    jp,
+    jo,
+    js,
+    jne,
+    jnl,
+    jg,
+    jnb,
+    ja,
+    jnp,
+    jno,
+    jns,
+    loop,
+    loopz,
+    loopnz,
+    jcxz,
 
     pub fn asString(op: Operation) []const u8 {
         switch (op) {
@@ -103,7 +123,53 @@ const Operation = enum {
             .add => return "add",
             .sub => return "sub",
             .cmp => return "cmp",
+            .je => return "je",
+            .jl => return "jl",
+            .jle => return "jle",
+            .jb => return "jb",
+            .jbe => return "jbe",
+            .jp => return "jp",
+            .jo => return "jo",
+            .js => return "js",
+            .jne => return "jne",
+            .jnl => return "jnl",
+            .jg => return "jg",
+            .jnb => return "jnb",
+            .ja => return "ja",
+            .jnp => return "jnp",
+            .jno => return "jno",
+            .jns => return "jns",
+            .loop => return "loop",
+            .loopz => return "loopz",
+            .loopnz => return "loopnz",
+            .jcxz => return "jcxz",
         }
+    }
+    pub fn operands(op: Operation) u8 {
+        return switch (op) {
+            .je,
+            .jl,
+            .jle,
+            .jb,
+            .jbe,
+            .jp,
+            .jo,
+            .js,
+            .jne,
+            .jnl,
+            .jg,
+            .jnb,
+            .ja,
+            .jnp,
+            .jno,
+            .jns,
+            .loop,
+            .loopz,
+            .loopnz,
+            .jcxz,
+            => 1,
+            else => 2,
+        };
     }
 };
 
@@ -114,8 +180,12 @@ const Instruction = struct {
     width: OperationWidth,
 
     pub fn format(this: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-        const width_needed = !this.src.hasKnownSize() and !this.dst.hasKnownSize();
+        if (this.op.operands() == 1) {
+            try writer.print("{s} {f}", .{ this.op.asString(), this.src });
+            return;
+        }
 
+        const width_needed = !this.src.hasKnownSize() and !this.dst.hasKnownSize();
         if (width_needed) {
             try writer.print("{s} {s} {f}, {f}", .{ this.op.asString(), this.width.asString(), this.dst, this.src });
         } else {
@@ -191,6 +261,30 @@ const SubImmediateFromAccumulatorOpCode = 0b0010110;
 const CmpRegMemAndRegOpCode = 0b001110;
 const CmpImmediateAndAccumulatorOpCode = 0b0011110;
 
+const JNZOpCode = enum(u8) {
+    JE = 0b01110100,
+    JL = 0b01111100,
+    JLE = 0b01111110,
+    JB = 0b01110010,
+    JBE = 0b01110110,
+    JP = 0b01111010,
+    JO = 0b01110000,
+    JS = 0b01111000,
+    JNE = 0b01110101,
+    JNL = 0b01111101,
+    JG = 0b01111111,
+    JNB = 0b01110011,
+    JA = 0b01110111,
+    JNP = 0b01111011,
+    JNO = 0b01110001,
+    JNS = 0b01111001,
+    LOOP = 0b11100010,
+    LOOPZ = 0b11100001,
+    LOOPNZ = 0b11100000,
+    JCXZ = 0b11100011,
+    _,
+};
+
 const Decoder = struct {
     buffer: []const u8,
     pos: isize,
@@ -251,7 +345,48 @@ const Decoder = struct {
             return try decoder.decodeCmpImmediateAndAccumulator(first_byte);
         }
 
+        // jnz
+        const maybe_jnz_op: ?Operation = switch (@as(JNZOpCode, @enumFromInt(first_byte))) {
+            .JE => Operation.je,
+            .JL => Operation.jl,
+            .JLE => Operation.jle,
+            .JB => Operation.jb,
+            .JBE => Operation.jbe,
+            .JP => Operation.jp,
+            .JO => Operation.jo,
+            .JS => Operation.js,
+            .JNE => Operation.jne,
+            .JNL => Operation.jnl,
+            .JG => Operation.jg,
+            .JNB => Operation.jnb,
+            .JA => Operation.ja,
+            .JNP => Operation.jnp,
+            .JNO => Operation.jno,
+            .JNS => Operation.jns,
+            .LOOP => Operation.loop,
+            .LOOPZ => Operation.loopz,
+            .LOOPNZ => Operation.loopnz,
+            .JCXZ => Operation.jcxz,
+
+            _ => null,
+        };
+        if (maybe_jnz_op) |jnz_op| {
+            return try decoder.decodeJnz(jnz_op);
+        }
+
+        std.debug.print("byte with no opcode match: 0b{b:0>8}\n", .{first_byte});
+
         return error.NoOpCodeMatch;
+    }
+
+    fn decodeJnz(decoder: *Decoder, operation: Operation) !Instruction {
+        const label_offset_bytes: i8 = @bitCast(try decoder.nextByte());
+        return Instruction{
+            .op = operation,
+            .src = .{ .immediate = @intCast(label_offset_bytes) },
+            .dst = .{ .immediate = 0 }, // no destination
+            .width = .byte,
+        };
     }
 
     fn decodeCmpImmediateAndAccumulator(decoder: *Decoder, first_byte: u8) !Instruction {
